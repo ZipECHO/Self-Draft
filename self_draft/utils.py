@@ -144,7 +144,7 @@ def load_quac(file_path, begin, end):
 
 
 def load_mbpp_eval(file_path, begin, end):
-    all_data = load_dataset(file_path)
+    all_data = load_dataset(file_path,'sanitized')
     return all_data['test']['prompt']
 
 
@@ -162,16 +162,12 @@ def load_prompts(file_path, begin=None, end=None):
         return load_questions(file_path, begin, end)
     elif 'HumanEval'.lower() in file_path.lower():
         return load_human_eval(file_path, begin, end)
-    elif 'ifeval' in file_path.lower():
-        return load_questions(file_path, begin, end)
     elif 'gsm' in file_path.lower():
         return load_questions(file_path, begin, end)
     elif "mbpp" in file_path.lower():
         return load_mbpp_eval(file_path, begin, end)
-    elif 'dolly' in file_path:
-        return load_questions(file_path, begin, end)
-    elif 'self-made' in file_path.lower():
-        return load_text(file_path)
+    else:
+        raise RuntimeError(f'Unsupported benchmark: {file_path}')
 
 
 # get model arch and inference id for log
