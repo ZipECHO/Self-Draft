@@ -13,7 +13,7 @@ cd data
 bash download.sh
 ```
 
-2. Run the script
+3. Run the script
 ```bash
 # run gsm-100
 CUDA_VISIBLE_DEVICES=1 python main.py --question-file data/gsm/test.jsonl --sample-number 100 --model-path meta-llama/Llama-2-7b-chat-hf
