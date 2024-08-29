@@ -137,7 +137,7 @@ class AuxBranch:
         aux_idxs = [[0, 1]]
         for a in self.aux_sizes:
             aux_idxs.append([aux_idxs[-1][1], aux_idxs[-1][1] + a])
-        self.hm_mask = generate_hm_with_aux(sum(self.aux_sizes) + 1, aux_idxs)  # todo why +1
+        self.hm_mask = generate_hm_with_aux(sum(self.aux_sizes) + 1, aux_idxs)
 
 
 class DraftBranch:
