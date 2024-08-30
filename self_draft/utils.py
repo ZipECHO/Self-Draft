@@ -20,7 +20,7 @@ from loguru import logger
 from transformers import GenerationMixin
 from transformers.models.llama import modeling_llama
 
-from .decoding import FUNC_MAP, greedy_search, greedy_search_proxy
+from .decoding import FUNC_MAP, greedy_search, greedy_search_proxy,sample_proxy,sample
 from .distribute_utils import get_device
 from .inference_profile import *
 from .models.Llama import llama
@@ -196,7 +196,9 @@ def augment_llama():
 
 def augment_generate():
     FUNC_MAP["greedy_search"] = greedy_search
+    FUNC_MAP['sample'] = sample
     GenerationMixin.greedy_search = greedy_search_proxy
+    GenerationMixin.sample = sample_proxy
     return
 
 

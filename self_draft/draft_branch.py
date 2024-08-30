@@ -1,5 +1,5 @@
 import random
-
+import numpy as np
 import torch
 
 
@@ -214,16 +214,16 @@ class DraftBranch:
         elif self.filled_depth < self.branch_len - 2:
             self.aux_branch.shorter_aux()
 
-            for bl in range(self.filled_depth + 1):
-                self.branches[bl] = self.branches[bl][1:]  # 所有结果左移一位
-
+            for d in range(self.filled_depth + 1):
+                self.branches[d] = self.branches[d][1:]  # 所有结果左移一位
             self.branches[self.filled_depth + 1] = inp_logits[1:]
-            self.widths.append(len(inp_logits[1:]))
+
             self.filled_depth += 1
+
             self.widths = []
             self.widths.append(sum(self.aux_branch.aux_sizes))
-            for l in range(1, self.filled_depth + 1):
-                self.widths.append(len(self.branches[l]))
+            for d in range(1, self.filled_depth + 1):
+                self.widths.append(len(self.branches[d]))
 
             self.update_attn_mask()
         else:
@@ -232,17 +232,17 @@ class DraftBranch:
                 max_hit, hit_point, pre_len = self.verify_candidates(verify_results, cdt_contents, branch_hits,
                                                                      corpus_hits)
 
-            if self.always_fwd_one:  # update past tokens
+            if self.always_fwd_one:  # update draft branches
                 self.aux_branch.update_aux(self.branches[1][1:])
                 self.branches[0] = self.branches[1][1:]
-                for l in range(1, self.branch_len - 2):
-                    self.branches[l] = self.branches[l + 1][:]
+                for d in range(1, self.branch_len - 2):
+                    self.branches[d] = self.branches[d + 1][:]
 
                 self.branches[self.branch_len - 2] = new_results
             else:
                 self.branches[0] = self.branches[1][1 + max_hit:]
-                for l in range(1, self.branch_len - 2):
-                    self.branches[l] = self.branches[l + 1][max_hit:]
+                for d in range(1, self.branch_len - 2):
+                    self.branches[d] = self.branches[d + 1][max_hit:]
 
                 self.branches[self.branch_len - 2] = new_results[max_hit:]
             assert self.aux_branch.aux_sizes == [len(a) for a in self.aux_branch.aux_list]
@@ -256,78 +256,82 @@ class DraftBranch:
             hits = corpus_hits
         return max_hit, hit_point, pre_len, hits, g_size, candidate_len
 
-    def update_draft_branches_inter_sample(self, outputs, cdt_content, input_ids, logits_warper):  # 暂时先不更改这一部分
+    def setup_seed(self,seed):
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+    def update_draft_branches_inter_sample(self, outputs,next_token_scores,next_tokens, cdt_content, input_ids, logits_warper):  # 暂时先不更改这一部分
         branch_cdt_tokens, branch_cdt_size, corpus_cdt_tokens, corpus_cdt_size = cdt_content
-        next_token_scores = logits_warper(input_ids, outputs.out_logits)
         max_hit, hit_point, pre_len = 0, 0, 0
-        aux_sizes = [len(a) for a in self.aux_list]
-
         if self.filled_depth == 0:
-            probs = torch.nn.functional.softmax(next_token_scores, dim=-1)
-            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            # probs = torch.nn.functional.softmax(next_token_scores, dim=-1)
+            # next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
             hits = [next_tokens.item()]
             self.branches[0] = self.branches[0][1:]
-            self.aux_list = self.aux_list[1:]
+            self.aux_branch.shorter_aux()
             self.branches[1] = torch.argmax(outputs.inp_logits, dim=-1)[0].tolist()
+            self.widths.append(len(self.branches[1]))
             # shortening the aux_list
-            for i in range(len(self.aux_list)):
-                if len(self.aux_list[i]) + self.filled_depth > self.branch_len - 2:
-                    if len(self.aux_list[i]) > 1:
-                        self.aux_list[i] = self.aux_list[i][1:]
+            self.attn_mask = self.aux_branch.attn_mask
             self.filled_depth += 1
+            self.update_attn_mask()
+
 
         elif self.filled_depth < self.branch_len - 2:
-            self.aux_list = self.aux_list[1:]
-            probs = torch.nn.functional.softmax(next_token_scores, dim=-1)
-            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            self.aux_branch.shorter_aux()
+            # probs = torch.nn.functional.softmax(next_token_scores, dim=-1)
+            # next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
             hits = [next_tokens.item()]
 
-            for l in range(self.filled_depth + 1):
-                self.branches[l] = self.branches[l][1:]
+            for d in range(self.filled_depth + 1):
+                self.branches[d] = self.branches[d][1:]
             self.branches[self.filled_depth + 1] = torch.argmax(outputs.inp_logits, dim=-1)[0].tolist()[1:]
 
-            # shortening the aux_list
-            for i in range(len(self.aux_list)):
-                if len(self.aux_list[i]) + self.filled_depth >= self.branch_len - 2:
-                    if len(self.aux_list[i]) > 1:
-                        self.aux_list[i] = self.aux_list[i][1:]
-            self.filled_depth += 1
+            self.filled_depth+=1
+            self.widths = []
+            self.widths.append(sum(self.aux_branch.aux_sizes))
+            for d in range(1, self.filled_depth + 1):
+                self.widths.append(len(self.branches[d]))
+            self.update_attn_mask()
 
         else:
             if len(branch_cdt_tokens) or len(corpus_cdt_tokens):
 
                 hits, max_hit, hit_point, pre_len = self.verify_candidates_with_sample(outputs, cdt_content, input_ids,
                                                                                        next_token_scores, logits_warper)
-                next_tokens = torch.tensor([hits[0]], device=next_token_scores.device)
+                # next_tokens = torch.tensor([hits[0]], device=next_token_scores.device)
             else:
-                probs_next = torch.nn.functional.softmax(next_token_scores, dim=-1)
-                next_tokens = torch.multinomial(probs_next, num_samples=1).squeeze(1)
+                # probs_next = torch.nn.functional.softmax(next_token_scores, dim=-1)
+                # next_tokens = torch.multinomial(probs_next, num_samples=1).squeeze(1)
                 hits = [next_tokens.item()]
             new_results = torch.argmax(outputs.inp_logits, dim=-1)[0].tolist()
             assert len(self.branches[self.branch_len - 2]) == self.branch_num and len(new_results) == self.branch_num
 
-            if self.always_fwd_one:
+            if self.always_fwd_one: # update update draft branches
+                self.aux_branch.update_aux(self.branches[1][1:])
                 self.branches[0] = self.branches[1][1:]
-                for l in range(1, self.branch_len - 2):
-                    self.branches[l] = self.branches[l + 1][:]
+                for d in range(1, self.branch_len - 2):
+                    self.branches[d] = self.branches[d + 1][:]
 
                 self.branches[self.branch_len - 2] = new_results
 
             else:
                 self.branches[0] = self.branches[1][1 + max_hit:]
-                for l in range(1, self.branch_len - 2):
-                    self.branches[l] = self.branches[l + 1][max_hit:]
+                for d in range(1, self.branch_len - 2):
+                    self.branches[d] = self.branches[d + 1][max_hit:]
 
                 self.branches[self.branch_len - 2] = new_results[max_hit:]
 
-            assert sum(aux_sizes) == len(self.aux_list)
+        candidate_len = len(branch_cdt_tokens) + len(corpus_cdt_tokens)
 
         if pre_len == 0:
             g_size = branch_cdt_size
         else:
             g_size = corpus_cdt_size
 
-        return next_tokens, max_hit, hit_point, pre_len, hits, g_size
+        return next_tokens, max_hit, hit_point, pre_len, hits, g_size,candidate_len
 
     @staticmethod
     def insert_values(lst, interval, values):
@@ -357,10 +361,12 @@ class DraftBranch:
             pad_len = branch_cdt_size - corpus_cdt_size
             pad_list = [pad_token_id] * pad_len
             draft_tokens = branch_cdt_tokens + self.insert_values(corpus_cdt_tokens, corpus_cdt_size, pad_list)
-        else:
+        elif branch_cdt_size<corpus_cdt_size:
             pad_len = corpus_cdt_size - branch_cdt_size
             pad_list = [pad_token_id] * pad_len
             draft_tokens = self.insert_values(branch_cdt_tokens, branch_cdt_size, pad_list) + corpus_cdt_tokens
+        else:
+            draft_tokens = branch_cdt_tokens + corpus_cdt_tokens
         if branch_cdt_tokens and corpus_cdt_tokens:
             draft_size = max(branch_cdt_size, corpus_cdt_size)
         elif branch_cdt_tokens:

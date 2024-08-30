@@ -93,15 +93,21 @@ def load_corpus_cache(args):
 
 def greedy_decoding(args, model):
     eval_data = os.path.dirname(args.question_file).split('/')[-1]
-    args.model_arch = get_model_arch(args)
     logger_path = os.path.join('log/ar', eval_data, f'{args.model_arch}-{eval_data}-{args.max_new_tokens}.log')
     greedy_id = logger.add(logger_path, level=args.log_level)
     args.self_draft = 0
     run(args, model)
     args.self_draft = 1
     logger.remove(greedy_id)
-    # os.chmod(logger_path, 0o444)
 
+def sample_decoding(args,model):
+    eval_data = os.path.dirname(args.question_file).split('/')[-1]
+    logger_path = os.path.join('log/ar', eval_data, f'{args.model_arch}-{eval_data}-{args.max_new_tokens}.log')
+    greedy_id = logger.add(logger_path, level=args.log_level)
+    args.self_draft = 0
+    run(args, model)
+    args.self_draft = 1
+    logger.remove(greedy_id)
 
 def grid_search_branch_len_num(args, model):
     base_corpus_cache = load_corpus_cache(args)
@@ -196,6 +202,7 @@ def get_model_answers(
         stats[question_idx] = {}
         for c in range(num_choices):
             torch.manual_seed(c)
+            setup_seed(question_idx)
             conv = get_conversation_template(model_id)
             turns = []
             prompts = []
@@ -217,9 +224,6 @@ def get_model_answers(
                 conv.append_message(conv.roles[1], None)
                 prompt = conv.get_prompt()
                 prompts.append(prompt)
-                # qs = polish_dialogue(question, bench_name, j)
-                # message = set_user_query(query=qs, messages=message)
-                # prompt = tokenizer.apply_chat_template(message, tokenize=False)
                 input_ids = tokenizer([prompt]).input_ids
                 logger.debug('==========' * 5 + f'input prompts' + '==========' * 5)
                 logger.debug(prompt)
@@ -249,7 +253,6 @@ def get_model_answers(
                     overall_gen += tokens
                     overall_tp += [tokens / gap_time]
                     overall_steps += profile_.get_profile('forward_count')
-                    # overall_steps += profile_.get_profile('forward_count')
                     assert overall_steps == profile.get_profile('forward_count')
                     count_gen += 1
 

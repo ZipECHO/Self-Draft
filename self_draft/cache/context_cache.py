@@ -28,7 +28,7 @@ class ContextCache:
             assert len(self.cache[key]) == self.max_val_len
             self.cache[key] = self.cache[key][1:] + [tup]
 
-    def update_cache(self, other_cache):
+    def merge_cache(self, other_cache):
         if other_cache is None:
             return
         for key, val in other_cache.items():
