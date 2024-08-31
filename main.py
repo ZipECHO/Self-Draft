@@ -12,12 +12,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # model and data
     parser.add_argument("--model-path", type=str,
-                        # default='meta-llama/Llama-2-7b-chat-hf',
-                        default='/data/gaozip/llm_ckpt/TinyLlama-1___1B-step-50K-105b',
+                        default='meta-llama/Llama-2-7b-chat-hf',
                         help="The path to the weights. This can be a local folder or a Hugging Face repo ID.")
     parser.add_argument('--question-file', type=str,
-                        # default="data/gsm/test.jsonl",
-                        default="data/mt-bench/mt-bench.jsonl",
+                        default="data/gsm/test.jsonl",
                         help="The path to the question file.")
     parser.add_argument('--corpus-cache-path', type=str,
                         default="data/OANC/clean-5-OANC-tmp-cache.pickle", help="The path to the corpus cache file.")

@@ -216,10 +216,7 @@ def get_model_answers(
             for j in range(conv_range):
                 count_conv += 1
                 qs = extract_question(question, bench_name, j)
-                # if isinstance(question, dict) and 'turns' in question:
-                #     qs = question['turns'][j]
-                # else:
-                #     qs = question
+
                 conv.append_message(conv.roles[0], qs)
                 conv.append_message(conv.roles[1], None)
                 prompt = conv.get_prompt()
