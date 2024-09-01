@@ -8,7 +8,7 @@ from transformers.generation.utils import GenerateEncoderDecoderOutput, Generate
 from transformers.generation.utils import LogitsProcessorList, StoppingCriteriaList, GreedySearchOutput, \
     TemperatureLogitsWarper, TopPLogitsWarper, TopKLogitsWarper
 
-from .cache.Drafts import *
+from .cache.drafts import *
 from .inference_profile import *
 
 COLOR_PRINT = int(os.environ.get("COLOR_PRINT", 0))
