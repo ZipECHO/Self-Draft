@@ -1,19 +1,14 @@
-import os
-import warnings
 from time import perf_counter
 from typing import List, Optional, Union
-from torch import nn
 
-import torch
 import torch.distributed as dist
-from loguru import logger
+from torch import nn
 from transformers import LogitsProcessorList
-from transformers.generation.utils import GenerateEncoderDecoderOutput, GenerateDecoderOnlyOutput,GenerateNonBeamOutput
+from transformers.generation.utils import GenerateEncoderDecoderOutput, GenerateDecoderOnlyOutput, GenerateNonBeamOutput
 from transformers.generation.utils import LogitsProcessorList, StoppingCriteriaList, GreedySearchOutput, \
     TemperatureLogitsWarper, TopPLogitsWarper, TopKLogitsWarper
 
-from .cache.context_cache import ContextCache
-from .draft_branch import DraftBranch
+from .cache.Drafts import *
 from .inference_profile import *
 
 COLOR_PRINT = int(os.environ.get("COLOR_PRINT", 0))
@@ -25,6 +20,7 @@ def greedy_search_proxy(self, *args, **kwargs):
     SELF_DRAFT = self.draft_config.self_draft
     if SELF_DRAFT:
         return self_draft_greedy_search(self, corpus_cache=self.corpus_cache, chat=False, *args, **kwargs)
+        # return self_draft_batch_greedy_search(self, corpus_cache=self.corpus_cache, chat=False, *args, **kwargs)
     else:
         return FUNC_MAP["greedy_search"](self, *args, **kwargs)
 
@@ -156,75 +152,21 @@ def self_draft_greedy_search(
         model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
         profile.incremental_update('prepare_input_time', perf_counter() - t0)
         # profile['prepare_input_time'] += perf_counter() - t0
-
         del t0
 
-        context_cdt_tokens, corpus_cdt_tokens = [], []
-        context_cdt_tup, corpus_cdt_tup = [], []
-        context_cdt_count, corpus_cdt_count = 0, 0
-        branch_cdt_tup = []
+        branch_cdt_tokens, corpus_cdt_tokens = [], []
+        branch_cdt_count, corpus_cdt_count = 0, 0
+
         t1 = perf_counter()
         # ========Get draft sequences=========
-        if draft_branches.filled_depth >= branch_len - 2 and self.draft_config.use_context:
-            t0 = perf_counter()
-            context_cdt_tokens, context_cdt_tup, context_cdt_count \
-                = self.context_cache.retrieve(all_old_tokens)
-            profile.incremental_update('context_cdt_time', perf_counter() - t0)
-            profile.incremental_update('context_cdt_count', len(context_cdt_tup))
-
-        overlap_c_ = 0
-        if self.draft_config.use_corpus and not is_prefill:
-            _ = self.context_cache.max_val_len - context_cdt_count
-            if int(self.draft_config.limit_corpus_count):
-                if _ == 0:
-                    corpus_cdt_max = 2
-                else:
-                    corpus_cdt_max = min(3, _)
-            else:
-                corpus_cdt_max = _
-            t0 = perf_counter()
-            if WO_CTX:
-                corpus_cdt_max = self.context_cache.max_val_len
-            (corpus_cdt_tokens, corpus_cdt_tup,
-             corpus_cdt_count, overlap_c_) = corpus_cache.retrieve_from_corpus(lst_token,
-                                                                               self.draft_config.search_with_dif_key_len,
-                                                                               all_old_tokens,
-                                                                               self.draft_config.max_key_len,
-                                                                               corpus_cdt_max, pre_cdts=context_cdt_tup)
-            profile.incremental_update('corpus_cdt_count', len(corpus_cdt_tup))
-            profile.incremental_update('corpus_cdt_time', perf_counter() - t0)
+        if not is_prefill and draft_branches.filled_depth >= branch_len - 2:
+            (branch_cdt_tokens, branch_cdt_tup, branch_cdt_count, corpus_cdt_tokens, corpus_cdt_tup,
+             corpus_cdt_count) = retrieve_drafts(all_old_tokens, self.draft_config.use_context,
+                                                 self.draft_config.use_corpus, self.context_cache, corpus_cache)
 
         profile.incremental_update('cache_retrieve_time', perf_counter() - t1)
         t_after_retrieve = perf_counter()
 
-        if self.draft_config.use_context and self.draft_config.use_corpus:
-            branch_cdt_tup = set(context_cdt_tup)
-            assert len(branch_cdt_tup) == len(context_cdt_tup)
-            assert len(set(context_cdt_tup + corpus_cdt_tup)) == len(context_cdt_tup + corpus_cdt_tup)
-            branch_cdt_tokens = []
-            for i in branch_cdt_tup:
-                branch_cdt_tokens += list(i)
-
-            branch_cdt_count = len(branch_cdt_tup)
-
-        elif self.draft_config.use_corpus:
-            branch_cdt_tokens = []
-            branch_cdt_count = 0
-        elif self.draft_config.use_context:
-            corpus_cdt_count = 0
-            corpus_cdt_tokens = []
-            branch_cdt_tup = set(context_cdt_tup)
-            branch_cdt_tokens = []
-            for i in branch_cdt_tup:
-                branch_cdt_tokens += list(i)
-            branch_cdt_count = len(branch_cdt_tup)
-
-        else:
-            branch_cdt_count = 0
-            corpus_cdt_count = 0
-            branch_cdt_tokens = []
-            corpus_cdt_tokens = []
-        profile.incremental_update('overlap_time', perf_counter() - t_after_retrieve)
         profile.incremental_update('total_candidate_count', branch_cdt_count + corpus_cdt_count)
         profile.incremental_update('after_retrieve_time', perf_counter() - t_after_retrieve)
         profile.incremental_update('before_forward_time', perf_counter() - ti)
@@ -236,16 +178,14 @@ def self_draft_greedy_search(
 
         t0 = perf_counter()
         cdt_content = (branch_cdt_tokens, BRANCH_GRAM_N, corpus_cdt_tokens, CORPUS_GRAM_N)
-
-        profile.incremental_update('aux_tokens_num',
-                                   sum(draft_branches.widths))
+        profile.incremental_update('aux_tokens_num', sum(draft_branches.widths))
         profile.incremental_update('cdt_tokens_num', len(branch_cdt_tokens) + len(corpus_cdt_tokens))
         outputs, forward_profile = self.SDforward(draft_branches=draft_branches, cdt_content=cdt_content,
                                                   output_attentions=output_attentions,
                                                   output_hidden_states=output_hidden_states, return_dict=True,
                                                   **model_inputs)
 
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
         profile.incremental_updates(forward_profile)
         profile.incremental_update('forward_time', perf_counter() - t0)
 
@@ -257,9 +197,7 @@ def self_draft_greedy_search(
             continue
 
         next_token_logits = outputs.out_logits
-
         next_tokens_scores = logits_processor(input_ids, next_token_logits)
-
         next_tokens = torch.argmax(next_tokens_scores, dim=-1)
         if eos_token_id is not None:
             if pad_token_id is None:
@@ -533,7 +471,7 @@ def greedy_search(
         profile.incremental_update('before_forward_time', perf_counter() - ti)
         # forward pass to get next token
         tf = perf_counter()
-        outputs,forward_profile = self(
+        outputs, forward_profile = self(
             **model_inputs,
             return_dict=True,
             output_attentions=output_attentions,
@@ -765,73 +703,19 @@ def self_draft_sample(
 
         del t0
 
-        context_cdt_tokens, corpus_cdt_tokens = [], []
-        context_cdt_tup, corpus_cdt_tup = [], []
-        context_cdt_count, corpus_cdt_count = 0, 0
+        branch_cdt_tokens, corpus_cdt_tokens = [], []
+        branch_cdt_count, corpus_cdt_count = 0, 0
 
         t1 = perf_counter()
 
         # ========Get draft sequences=========
-        if draft_branches.filled_depth >= branch_len - 2 and self.draft_config.use_context:
-            t0 = perf_counter()
-            context_cdt_tokens, context_cdt_tup, context_cdt_count \
-                = self.context_cache.retrieve(all_old_tokens)
-            profile.incremental_update('context_cdt_time', perf_counter() - t0)
-            profile.incremental_update('context_cdt_count', len(context_cdt_tup))
-
-        overlap_c_ = 0
-        if self.draft_config.use_corpus and is_prefill is not None:  # append the n grams from the corpus cache to the guess tokens
-            _ = self.context_cache.max_val_len - context_cdt_count
-            if int(self.draft_config.limit_corpus_count):
-                if _ == 0:
-                    corpus_cdt_max = 2
-                else:
-                    corpus_cdt_max = min(3, _)
-            else:
-                corpus_cdt_max = _
-            t0 = perf_counter()
-            if WO_CTX:
-                corpus_cdt_max = self.context_cache.max_val_len
-            (corpus_cdt_tokens, corpus_cdt_tup,
-             corpus_cdt_count, overlap_c_) = corpus_cache.retrieve_from_corpus(lst_token,
-                                                                               self.draft_config.search_with_dif_key_len,
-                                                                               all_old_tokens,
-                                                                               self.draft_config.max_key_len,
-                                                                               corpus_cdt_max, pre_cdts=context_cdt_tup)
-            profile.incremental_update('corpus_cdt_count', len(corpus_cdt_tup))
-            profile.incremental_update('corpus_cdt_time', perf_counter() - t0)
-
+        if draft_branches.filled_depth >= branch_len - 2 and not is_prefill:
+            (branch_cdt_tokens, branch_cdt_tup, branch_cdt_count, corpus_cdt_tokens, corpus_cdt_tup,
+             corpus_cdt_count) = retrieve_drafts(all_old_tokens, self.draft_config.use_context,
+                                                 self.draft_config.use_corpus, self.context_cache, corpus_cache)
         profile.incremental_update('cache_retrieve_time', perf_counter() - t1)
+
         t_after_retrieve = perf_counter()
-
-        if self.draft_config.use_context and self.draft_config.use_corpus:
-            branch_cdt_tup = set(context_cdt_tup)
-            assert len(branch_cdt_tup) == len(context_cdt_tup)
-            assert len(set(context_cdt_tup + corpus_cdt_tup)) == len(context_cdt_tup + corpus_cdt_tup)
-            branch_cdt_tokens = []
-            for i in branch_cdt_tup:
-                branch_cdt_tokens += list(i)
-
-            branch_cdt_count = len(branch_cdt_tup)
-
-        elif self.draft_config.use_corpus:
-            branch_cdt_tokens = []
-            branch_cdt_count = 0
-        elif self.draft_config.use_context:
-            corpus_cdt_count = 0
-            corpus_cdt_tokens = []
-            branch_cdt_tup = set(context_cdt_tup)
-            branch_cdt_tokens = []
-            for i in branch_cdt_tup:
-                branch_cdt_tokens += list(i)
-            branch_cdt_count = len(branch_cdt_tup)
-
-        else:
-            branch_cdt_count = 0
-            corpus_cdt_count = 0
-            branch_cdt_tokens = []
-            corpus_cdt_tokens = []
-        profile.incremental_update('overlap_time', perf_counter() - t_after_retrieve)
         profile.incremental_update('total_candidate_count', branch_cdt_count + corpus_cdt_count)
         profile.incremental_update('after_retrieve_time', perf_counter() - t_after_retrieve)
         profile.incremental_update('before_forward_time', perf_counter() - ti)
@@ -871,9 +755,10 @@ def self_draft_sample(
         next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
         if draft_branches.filled_depth >= draft_branches.branch_len - 2:
             draft_results = torch.argmax(outputs.draft_logits, dim=-1)[0].tolist()
-            self.context_cache.update_cache(all_old_tokens,next_tokens, draft_branches, draft_results)
+            self.context_cache.update_cache(all_old_tokens, next_tokens, draft_branches, draft_results)
         next_tokens_2, max_hit, hit_point, pre_len, hits, g_size, candidate_len \
-            = draft_branches.update_draft_branches_inter_sample(outputs, next_token_scores,next_tokens,cdt_content, input_ids, logits_warper)
+            = draft_branches.update_draft_branches_inter_sample(outputs, next_token_scores, next_tokens, cdt_content,
+                                                                input_ids, logits_warper)
         assert next_tokens == next_tokens_2
         tau = perf_counter()
         profile.incremental_update('update_draft_branches_time', tau - t0)
@@ -1219,7 +1104,7 @@ def sample(
         model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
         # forward pass to get next token
-        outputs,forward_profile = self(
+        outputs, forward_profile = self(
             **model_inputs,
             return_dict=True,
             output_attentions=output_attentions,
@@ -1312,4 +1197,4 @@ def sample(
                 past_key_values=model_kwargs.get("past_key_values"),
             )
     else:
-        return (input_ids,steps,profile)
+        return (input_ids, steps, profile)

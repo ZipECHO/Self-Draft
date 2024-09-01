@@ -141,12 +141,12 @@ class AuxBranch:
 
 
 class DraftBranch:
-    def __init__(self, all_old_tokens, branch_num, branch_len, max_pad_len, ini_method, always_fwd_one):
+    def __init__(self, all_old_tokens, branch_num, branch_len, max_pad_len, ini_method, always_fwd_one=None):
         max_pad_len = 2 if max_pad_len is None else max_pad_len
         self.branches = [None for _ in range(branch_len - 1)]
         self.branch_num = branch_num
         self.branch_len = branch_len
-        self.always_fwd_one = always_fwd_one
+        self.always_fwd_one = 1 if always_fwd_one is None else always_fwd_one
         if ini_method in ['RANDOM_WITH_AUX']:
             self.ini_method = copy_from
         self.aux_branch = AuxBranch(branch_num + branch_len - 3, max_pad_len, all_old_tokens)

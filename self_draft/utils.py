@@ -76,6 +76,18 @@ def update_agent_response(query, message):
     return message
 
 
+def extract_batch_question(questions,bench_name,j):
+    if isinstance(questions,str):
+        question_batch = [questions]
+    elif isinstance(questions,list):
+        question_batch = questions
+    else:
+        raise RuntimeError(f'Unsupported input type: {type(questions)}')
+    res = []
+    for question in question_batch:
+        res.append(extract_question(question,bench_name,j))
+    return res
+
 def extract_question(question, bench_name, j=0):
     if bench_name.lower() == 'humaneval':
         return question
@@ -348,5 +360,8 @@ def ini_model(args):
         logger.info('model load finished!')
 
         model_.tokenizer = tokenizer_
-
+    tokenizer_.padding_side = "left"
+    tokenizer_.add_special_tokens({'pad_token': '[PAD]'})
     return model_, tokenizer_
+
+

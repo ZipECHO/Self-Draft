@@ -11,7 +11,7 @@ from transformers import AutoTokenizer
 
 class CorpusCache:
     def __init__(self, N, max_key_len=4, tokenizer_path=None, cache_save_path=None, text_file_path=None, rebuild=False,
-                 clean=False):
+                 clean=False,search_with_dif_key_len=1):
         self.tokenizer_name = os.path.dirname(tokenizer_path).split('/')[-1]
         self.text_file_path = text_file_path
         if text_file_path is not None:
@@ -21,9 +21,9 @@ class CorpusCache:
 
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=False)
         logger.info(f'load tokenizer from {tokenizer_path} done!')
-
         self.max_key_len = max_key_len
         self.n_gram = N
+        self.search_with_dif_key_len = search_with_dif_key_len
         if os.path.isfile(cache_save_path):
             self.n_gram_cache = pickle.load(open(cache_save_path, 'rb'))
         else:
@@ -237,22 +237,38 @@ class CorpusCache:
             pickle.dump(sorted(content), file)
         return sorted(content)
 
-    def retrieve_from_corpus(self, lst_token, search_with_dif_key_len, all_old_tokens, max_key_len,
+    # def retrieve_from_corpus(self, lst_token, search_with_dif_key_len, all_old_tokens, max_key_len,
+    #                          corpus_cdt_max, pre_cdts=None):
+    #     corpus_n_gram = []
+    #     corpus_cdt_count = 0
+    #     overlap_c_ = 0
+    #     corpus_n_gram_ = []
+    #     pre_cdts = [] if pre_cdts is None else pre_cdts
+    #     if lst_token is not None:
+    #         if search_with_dif_key_len == 1:
+    #             corpus_n_gram_, overlap_c_ = self.retrieve_N_gram_with_different_key_length(
+    #                 all_old_tokens[-max_key_len:], corpus_cdt_max, pre_cdts)
+    #         else:
+    #             corpus_n_gram_ = self.retrieval_n_gram(lst_token, corpus_cdt_max)
+    #         corpus_cdt_count = len(corpus_n_gram_)
+    #         for tok in list(corpus_n_gram_):
+    #             corpus_n_gram += list(tok)
+    #
+    #     return corpus_n_gram, corpus_n_gram_, corpus_cdt_count, overlap_c_
+
+    def retrieve_from_corpus(self, all_old_tokens,
                              corpus_cdt_max, pre_cdts=None):
         corpus_n_gram = []
-        corpus_cdt_count = 0
         overlap_c_ = 0
-        corpus_n_gram_ = []
         pre_cdts = [] if pre_cdts is None else pre_cdts
-        if lst_token is not None:
-            if search_with_dif_key_len == 1:
-                corpus_n_gram_, overlap_c_ = self.retrieve_N_gram_with_different_key_length(
-                    all_old_tokens[-max_key_len:], corpus_cdt_max, pre_cdts)
-            else:
-                corpus_n_gram_ = self.retrieval_n_gram(lst_token, corpus_cdt_max)
-            corpus_cdt_count = len(corpus_n_gram_)
-            for tok in list(corpus_n_gram_):
-                corpus_n_gram += list(tok)
+        if self.search_with_dif_key_len == 1:
+            corpus_n_gram_, overlap_c_ = self.retrieve_N_gram_with_different_key_length(
+                all_old_tokens[-self.max_key_len:], corpus_cdt_max, pre_cdts)
+        else:
+            corpus_n_gram_ = self.retrieval_n_gram(all_old_tokens[-1], corpus_cdt_max)
+        corpus_cdt_count = len(corpus_n_gram_)
+        for tok in list(corpus_n_gram_):
+            corpus_n_gram += list(tok)
 
         return corpus_n_gram, corpus_n_gram_, corpus_cdt_count, overlap_c_
 

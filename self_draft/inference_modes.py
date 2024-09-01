@@ -361,3 +361,203 @@ def get_model_answers(
     logger.success(
         info
     )
+
+
+def get_model_answers_batch(
+        model,
+        tokenizer,
+        questions,
+        num_choices,
+        sample_number,
+        bench_name,
+        batch_size=2,
+        **kwargs
+):
+    ds_local_rank = int(os.getenv('LOCAL_RANK', '0'))
+    model_id = 'llama-2-7b'
+    overall_time = 0
+    overall_tp = []
+    overall_gen = 0
+    overall_steps = 0
+    count_gen = 0
+    stats = {}
+    profile = InferProfile()
+    setup_seed(10)
+    if sample_number == -1:
+        sample_idx = list(range(0, len(questions)))
+    else:
+        sample_idx = random.sample(range(0, len(questions)), sample_number)
+    if int(os.environ.get('MT_SPEC_SMP', 0)):
+        sample_idx = [0, 1, 10, 11, 20, 21, 30, 31, 40, 41, 50, 51, 60, 61, 70, 71]
+    count_conv = 0
+
+    sample_batches = [sample_idx[i:i + batch_size] for i in range(0, len(sample_idx), batch_size)]
+    question_batches = []
+    for i in range(len(sample_batches)):
+        question_batches.append([questions[idx] for idx in sample_batches[i]])
+
+    for i, questions in enumerate(question_batches):
+        # question = questions[question_idx]
+        logger.success(f'decoding questions:{i} / {sample_idx}')
+        stats[i] = {}
+        for c in range(num_choices):
+            torch.manual_seed(c)
+            setup_seed(i)
+            conv = get_conversation_template(model_id)
+            turns = []
+            prompts = []
+
+            if isinstance(questions[0], dict) and 'turns' in questions[0]:
+                conv_range = len(questions[0]['turns'])
+            else:
+                conv_range = 1
+            message = None
+
+            for j in range(conv_range):
+                count_conv += 1
+                qs = extract_batch_question(questions, bench_name, j)
+
+                # conv.append_message(conv.roles[0], qs)
+                # conv.append_message(conv.roles[1], None)
+                # prompt = conv.get_prompt()
+                # prompts.append(prompt)
+                input_ids = tokenizer(qs,padding=True).input_ids
+                logger.debug('==========' * 5 + f'input prompts' + '==========' * 5)
+                logger.debug(qs)
+                logger.debug('==========' * 5 + f'input prompts end' + '==========' * 5)
+
+                if kwargs['temperature'] < 1e-4:
+                    kwargs['do_sample'] = False
+                else:
+                    kwargs['do_sample'] = True
+
+                if True:
+                    start_time = time.time()
+
+                    t0 = time.perf_counter()
+                    (output_ids, s, profile_) = model.generate(
+                        torch.as_tensor(input_ids).cuda(),
+                        **kwargs,
+                    )
+                    profile.incremental_update('decoding_time', time.perf_counter() - t0)
+                    assert 'decoding_time' not in profile_.pf
+                    profile.incremental_updates(profile_)
+
+                    end_time = time.time()
+                    gap_time = end_time - start_time
+                    tokens = output_ids.numel() - len(input_ids[0])
+                    overall_time += gap_time
+                    overall_gen += tokens
+                    overall_tp += [tokens / gap_time]
+                    overall_steps += profile_.get_profile('forward_count')
+                    assert overall_steps == profile.get_profile('forward_count')
+                    count_gen += 1
+
+                    stats[i][j] = [gap_time, tokens]
+                    if get_device(model.draft_config) == 0 and ds_local_rank == 0:
+                        logger.success(
+                            f"step {i} \t turn {j}\ttime: {gap_time:.4f}\tgenerated tokens: {tokens}\t"
+                            f"Forward steps: {profile_.get_profile('forward_count')}\t"
+                            f"Throughput: {(tokens / gap_time):.4f}")
+
+                    if model.config.is_encoder_decoder:
+                        output_ids = output_ids[0]
+                    else:
+                        output_ids = output_ids[0][len(input_ids[0]):]
+
+                    if conv.stop_token_ids:
+                        stop_token_ids_index = [
+                            i
+                            for i, id in enumerate(output_ids)
+                            if id in conv.stop_token_ids
+                        ]
+                        if len(stop_token_ids_index) > 0:
+                            output_ids = output_ids[: stop_token_ids_index[0]]
+
+                    output = tokenizer.decode(
+                        output_ids,
+                        spaces_between_special_tokens=False,
+                    )
+                    if conv.stop_str and output.find(conv.stop_str) > 0:
+                        output = output[: output.find(conv.stop_str)]
+
+                    logger.info('==========' * 5 + f'output:' + '==========' * 5)
+                    logger.info(f'{output}')
+                    logger.info('==========' * 5 + f'output end' + '==========' * 5)
+
+                    for special_token in tokenizer.special_tokens_map.values():
+                        if isinstance(special_token, list):
+                            for special_tok in special_token:
+                                output = output.replace(special_tok, "")
+                        else:
+                            output = output.replace(special_token, "")
+                    output = output.strip()
+                    # message = update_agent_response(output, message)
+                    if hasattr(model, 'context_cache'):
+                        model.context_cache.stat_info()
+                    if len(overall_tp) > 1:
+                        info = (f"AVERAGE THROUGHPUT TILL NOW: {(sum(overall_tp) / count_gen):.4f} "
+                                f"({stdev(overall_tp):.4f}) "
+                                f"AVERAGE DECODING EFFICIENCY TILL NOW: "
+                                f"{((overall_gen / overall_steps) if overall_steps else 0):.4f}\t")
+                        info += (f"AVERAGE AUX TOKENS NUMBER TILL NOW: "
+                                 f"{profile.get_profile('aux_tokens_num') / overall_steps if overall_steps else 0:.4f}\t"
+                                 f"AVERAGE CANDIDATE TOKENS NUMBER TILL NOW: "
+                                 f"{profile.get_profile('cdt_tokens_num') / overall_steps if overall_steps else 0:.4f}")
+                        logger.success(info)
+                    if conv.name == "xgen" and output.startswith("Assistant:"):
+                        output = output.replace("Assistant:", "", 1).strip()
+
+                    '''
+                    except RuntimeError as e:
+                        print("ERROR question ID: ", question["question_id"])
+                        output = "ERROR"
+                    '''
+                    turns.append(output)
+                    conv.messages[-1][-1] = output
+
+            if model.draft_config.flush_interval == 0:
+                pass
+                # model.context_cache.reduce_token_map(model.draft_config.keep_num)
+            elif (count_conv + 1) % model.draft_config.flush_interval == 0 and hasattr(model, 'context_cache'):
+                model.context_cache.reduce_cache(model.draft_config.keep_num)
+            if hasattr(model,'context_cache'):
+                model.context_cache.c = 0
+
+        if get_device(model.draft_config) == 0 and ds_local_rank == 0:
+            logger.debug(profile)
+            key_average_keys = ['aux_tokens_num', 'cdt_tokens_num', 'compressed_tokens_num', "decoding_time",
+                                'iter_time',
+                                'before_forward_time', "prepare_input_time", 'cache_retrieve_time',
+                                "corpus_cdt_time", 'context_cdt_time',
+                                'forward_time', 'prepare_ids_time', 'LlamaModel_forward_time',
+                                'attention_mask_time',
+                                'mask_aux_time', 'mask_hm_time', 'mask_fill_time', 'mask_cdt_time',
+                                'layer_forward_time',
+                                'after_forward_time', 'decode_item_time', 'token_map_update_time',
+                                'update_draft_branches_time', 'update_kv_time', 'hit_time',
+                                'model_kwargs_update_time']
+            logger.debug('=================average profile==============')
+            s = ''
+            for k in key_average_keys:
+                s += f'{k}\t'
+            logger.debug(s)
+            s = ''
+            for k in key_average_keys:
+                s += f'{profile.get_profile(k) / overall_steps if overall_steps else 0}\t'
+            logger.debug(s)
+
+    if len(overall_tp) > 1:
+        logger.success('===============FINAL PPROFILE==================')
+        logger.success(
+            f"AVERAGE THROUGHPUT1: {(sum(overall_tp) / count_gen):.4f} ({stdev(overall_tp):.4f}) \t"
+            f"AVERAGE THROUGHPUT2: {(overall_gen / overall_time):.4f}")
+    info = (f"OVERALL GEN: {overall_gen}\tSTEP: {overall_steps}\t"
+            f"AVG DECODING EFFICIENCY: {(overall_gen / overall_steps if overall_steps > 0 else 0):.4f} \t")
+    info += (f"AVERAGE AUX TOKENS NUMBER: "
+             f"{profile.get_profile('aux_tokens_num') / overall_steps if overall_steps else 0:.4f} \t"
+             f"AVERAGE CANDIDATE TOKENS NUMBER: "
+             f"{profile.get_profile('cdt_tokens_num') / overall_steps if overall_steps else 0:.4f}")
+    logger.success(
+        info
+    )

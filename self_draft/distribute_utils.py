@@ -1,6 +1,6 @@
 def get_device(config):
     if "local_rank" not in config:
-        return 0 
+        return 0
     local_rank = config.local_rank
     return local_rank
 
