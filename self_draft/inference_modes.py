@@ -329,22 +329,18 @@ def get_model_answers(
             key_average_keys = ['aux_tokens_num', 'cdt_tokens_num', 'compressed_tokens_num', "decoding_time",
                                 'iter_time',
                                 'before_forward_time', "prepare_input_time", 'cache_retrieve_time',
-                                "corpus_cdt_time", 'context_cdt_time',
                                 'forward_time', 'prepare_ids_time', 'LlamaModel_forward_time',
                                 'attention_mask_time',
                                 'mask_aux_time', 'mask_hm_time', 'mask_fill_time', 'mask_cdt_time',
                                 'layer_forward_time',
-                                'after_forward_time', 'decode_item_time', 'token_map_update_time',
+                                'after_forward_time', 'decode_item_time', 'cache_update_time',
                                 'update_draft_branches_time', 'update_kv_time', 'hit_time',
                                 'model_kwargs_update_time']
             logger.debug('=================average profile==============')
             s = ''
             for k in key_average_keys:
-                s += f'{k}\t'
-            logger.debug(s)
-            s = ''
-            for k in key_average_keys:
-                s += f'{profile.get_profile(k) / overall_steps if overall_steps else 0}\t'
+                v = profile.get_profile(k) / overall_steps if overall_steps else 0
+                s += f'{k}\t\t{v:.6f}\n'
             logger.debug(s)
 
     if len(overall_tp) > 1:
@@ -529,12 +525,11 @@ def get_model_answers_batch(
             key_average_keys = ['aux_tokens_num', 'cdt_tokens_num', 'compressed_tokens_num', "decoding_time",
                                 'iter_time',
                                 'before_forward_time', "prepare_input_time", 'cache_retrieve_time',
-                                "corpus_cdt_time", 'context_cdt_time',
                                 'forward_time', 'prepare_ids_time', 'LlamaModel_forward_time',
                                 'attention_mask_time',
                                 'mask_aux_time', 'mask_hm_time', 'mask_fill_time', 'mask_cdt_time',
                                 'layer_forward_time',
-                                'after_forward_time', 'decode_item_time', 'token_map_update_time',
+                                'after_forward_time', 'decode_item_time', 'cache_update_time',
                                 'update_draft_branches_time', 'update_kv_time', 'hit_time',
                                 'model_kwargs_update_time']
             logger.debug('=================average profile==============')

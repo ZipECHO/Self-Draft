@@ -399,7 +399,7 @@ def greedy_search(
         **model_kwargs,
 ) -> Union[GreedySearchOutput, torch.LongTensor]:
     r"""
-    copy methods from transformers
+    copy methods from transformers, insert some profiling code
     ```"""
     # init
     profile = InferProfile()
@@ -890,7 +890,7 @@ def self_draft_sample(
 
     if return_dict_in_generate:
         if self.config.is_encoder_decoder:
-            return GreedySearchEncoderDecoderOutput(
+            return GenerateEncoderDecoderOutput(
                 sequences=input_ids,
                 scores=scores,
                 encoder_attentions=encoder_attentions,
@@ -900,7 +900,7 @@ def self_draft_sample(
                 decoder_hidden_states=decoder_hidden_states,
             )
         else:
-            return GreedySearchDecoderOnlyOutput(
+            return GenerateDecoderOnlyOutput(
                 sequences=input_ids,
                 scores=scores,
                 attentions=decoder_attentions,

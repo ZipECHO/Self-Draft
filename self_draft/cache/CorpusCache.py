@@ -273,8 +273,7 @@ class CorpusCache:
         return corpus_n_gram, corpus_n_gram_, corpus_cdt_count, overlap_c_
 
 # if __name__ == "__main__":
-#     # corpus_cache_path = '/cache/g50031158/corpus_cache_data/OANC-Llama-2-7b-chat-hf/corpus-OANC-Llama-2-7b-chat-hf-grams-4-key_lens-1-2-3-4.pkl'
-#     tokenizer_path = '/data2/GAOZip/llm_ckpt/Llama-2-7b-chat-hf/'
+#     tokenizer_path = '/path/to/tokenizer'
 #     text_file_path = 'data/OANC/OANC-all-text.pickle'
 #     cache_save_path = 'data/OANC/OANC-cache.pickle'
 #     corpus_name = 'OANC'

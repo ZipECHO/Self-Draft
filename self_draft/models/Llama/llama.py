@@ -45,14 +45,11 @@ def set_lower_triangular_true_efficient(matrix, start_row, start_col, end_row, e
     assert 0 <= end_row <= matrix_shape[0]
     assert 0 <= start_col < matrix_shape[1]
     assert 0 <= end_col <= matrix_shape[1]
-    # 生成行列的网格，即每个元素的行列索引
     rows, cols = torch.arange(matrix_shape[0]).unsqueeze(1), torch.arange(matrix_shape[1])
 
-    # 计算下三角的条件，同时限制在指定的子矩阵范围内
     mask = ((cols <= rows) & (rows >= start_row) & (rows < end_row) & (cols >= start_col) & (cols < end_col)).to(
         matrix.device)
 
-    # 使用masked_fill_来更新矩阵
     matrix.masked_fill_(mask, set_value)
 
     return matrix
@@ -439,8 +436,9 @@ def SDforward(
     return_dict = return_dict if return_dict is not None else self.config.use_return_dict
     assert labels is None, " Inference Mode "
     assert input_ids.size(0) == 1, " single batch only "
-    assert len(corpus_cdt_tokens) % corpus_gram_n == 0
-
+    assert corpus_gram_n == 0 or len(corpus_cdt_tokens) % corpus_gram_n == 0
+    assert branch_gram_n == 0 or len(branch_cdt_tokens) % branch_gram_n == 0
+    
     if past_key_values is not None:
         past_size = past_key_values[0][0].size(2)
     else:
